@@ -39,6 +39,7 @@ type
     ColorRow: TPanel;
     ChannelPanel: TPanel;
     ColorLabel: TLabel;
+    PenLabel: TLabel;
     LightPanel: TPanel;
     OpacityLabel: TLabel;
     OpacityPanel: TPanel;
