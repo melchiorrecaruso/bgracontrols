@@ -2,7 +2,7 @@
 { BGRAControls color values: a named color or a fixed RGBA
   value, with an alpha, and the TPersistent objects that publish one.
   The CSS RGB syntax parser lives here beside the symbolic color table;
-  relative origins are validated through BCColorUtils, which also provides
+  relative origins accept only CSS names and syntax. BCColorUtils provides
   text conversion and preserves symbolic identity until pixel resolution. }
 unit BCColors;
 
@@ -187,8 +187,10 @@ const
     This mapping does not guarantee equal browser and LCL pixels.
     Kinds without an entry have no symbolic CSS export (BCToCSS resolves
     system colors without a name to RGB). Do not add approximate modern
-    role mappings here: they would silently discard identity on input. }
-  BCSymbolicCSSNames: array[0..28] of TBCSymbolicCSSName = (
+    role mappings here: they would silently discard identity on input.
+    LinkText is the exception: clHotLight was the Windows hot-tracked link
+    color, the role of CSS LinkText. }
+  BCSymbolicCSSNames: array[0..29] of TBCSymbolicCSSName = (
     (Name: 'Scrollbar';           Kind: scScrollBar),
     (Name: 'Background';          Kind: scBackground),
     (Name: 'ActiveCaption';       Kind: scActiveCaption),
@@ -217,6 +219,7 @@ const
     (Name: 'ThreeDLightShadow';   Kind: sc3DLight),
     (Name: 'InfoText';            Kind: scInfoText),
     (Name: 'InfoBackground';      Kind: scInfoBk),
+    (Name: 'LinkText';            Kind: scHotLight),
     (Name: 'transparent';         Kind: scNone));
 
 { Named color whose CSS name is AName (case-insensitive): the canonical
@@ -234,20 +237,27 @@ function TryCSSNameToSymbolic(const AName: string; out AKind: TBCSymbolicColor):
    the unchanged, validated origin text for the caller to interpret. Only
    AColor.alpha is relevant, and only when AOverrideAlpha is True. Omitted
    relative alpha or / alpha sets AOverrideAlpha=False, preserving origin alpha.
-   Numbers and percentages are clamped and rounded to bytes, ties toward +infinity.
-   Historical comma syntax remains accepted: spaces before '(', omitted
-   parentheses, ignored suffix after ')', Pascal numeric forms and mixed
-   numeric/percentage channels. Partial channels are not supported here.
-   Channel expressions using calc(), none or relative channels other than
-   r g b are not supported. Modern function nesting is limited to 32 levels.
+   Numbers and percentages are clamped and rounded to bytes, ties toward
+   +infinity, using BGRABitmap's HalfUp.
+   Strict syntax only: the function must close at the end of the text, with
+   no space before '(', and the comma syntax does not mix numbers and
+   percentages in the RGB channels. Pascal numeric forms, partial channels,
+   calc(), none and relative channels other than r g b are not supported.
+   Origins accept CSS named/system colors and hex, not clXxx identifiers
+   or CSS-wide keywords. Function nesting is limited to 32 levels.
    Outputs must not be used on failure. }
 function TryParseCSSRGB(const S: string; out ABaseColor: string;
   out AColor: TBGRAPixel; out AOverrideAlpha: boolean): boolean;
 
+{ A CSS <percentage> such as '50%' or '49.8%' ('%' required) as an alpha
+  byte: clamped to 0..100%, ties toward +infinity (50% is 128).
+  Uses HalfUp, shared with TryParseCSSRGB. }
+function TryParseCSSPercentage(const S: string; out AValue: byte): boolean;
+
 implementation
 
 uses
-  BCColorUtils, Math;
+  BCColorUtils;
 
 { Private RGB syntax helpers. Origin validation is performed by the public
   TryParseCSSRGB wrapper. }
@@ -322,72 +332,146 @@ begin
   Result := Parts;
 end;
 
-{ Shared by CSS numbers and historical Val forms. F must be finite. }
-function CSSRGBToByte(F, MaxValue: double): byte;
-begin
-  { Clamp before scaling so even large finite inputs cannot overflow. }
-  if F <= 0 then Result := 0
-  else if F >= MaxValue then Result := 255
-  else
-  begin
-    { Store the scaled double before rounding, also on x87 targets where
-      intermediate extended precision can otherwise put .3 * 255 below 76.5. }
-    F := F * 255 / MaxValue;
-    Result := Trunc(F + 0.5);
-  end;
-end;
-
-{ CSS number/percentage, clamped and quantized to a byte. }
-function CSSRGBNumber(const S: string; AIsAlpha: boolean; out AValue: byte): boolean;
+{ CSS number (sign? (digits | digits? '.' digits) exponent?), without unit,
+  scaled to a byte as Value * 255 / AMax, clamped, ties toward +infinity.
+  Decimal syntax is validated before conversion; HalfUp provides the same
+  rounding as BGRABitmap. All fractional digits are read, but HalfUp takes
+  a single (about 7 significant digits): a value within about 1e-7 below a
+  tie may round up, e.g. 127.4999999 gives 128, as in BGRABitmap. }
+function CSSNumberToByte(const T: string; AMax: integer; out AValue: byte): boolean;
+const
+  MaxExp = 1000;
 var
-  T: string;
-  F, MaxValue: double;
-  Code, I, Start: integer;
-  IsPercent, HasDigits: boolean;
+  I, Start, Exp, PointPos: integer;
+  Neg, ExpNeg: boolean;
+  Digits, IntPart, FracPart: string;
+  IntValue: integer;
+  Fraction: double;
 begin
   Result := False;
-  if S = '' then Exit;
-  IsPercent := S[Length(S)] = '%';
-  if IsPercent then T := Copy(S, 1, Length(S) - 1) else T := S;
+  AValue := 0;
   if T = '' then Exit;
-  { CSS number: sign? (digits | digits? '.' digits) exponent? .
-    Val alone also accepts Pascal forms such as 1. and 1.e2. }
   I := 1;
-  if T[I] in ['+', '-'] then Inc(I);
+  Neg := False;
+  if T[I] in ['+', '-'] then
+  begin
+    Neg := T[I] = '-';
+    Inc(I);
+  end;
   Start := I;
   while (I <= Length(T)) and (T[I] in ['0'..'9']) do Inc(I);
-  HasDigits := I > Start;
+  IntPart := Copy(T, Start, I - Start);
+  FracPart := '';
   if (I <= Length(T)) and (T[I] = '.') then
   begin
     Inc(I);
     Start := I;
     while (I <= Length(T)) and (T[I] in ['0'..'9']) do Inc(I);
     if I = Start then Exit;
-    HasDigits := True;
+    FracPart := Copy(T, Start, I - Start);
   end;
-  if not HasDigits then Exit;
+  if (IntPart = '') and (FracPart = '') then Exit;
+  Exp := 0;
   if (I <= Length(T)) and (T[I] in ['e', 'E']) then
   begin
     Inc(I);
-    if (I <= Length(T)) and (T[I] in ['+', '-']) then Inc(I);
+    ExpNeg := False;
+    if (I <= Length(T)) and (T[I] in ['+', '-']) then
+    begin
+      ExpNeg := T[I] = '-';
+      Inc(I);
+    end;
     Start := I;
-    while (I <= Length(T)) and (T[I] in ['0'..'9']) do Inc(I);
+    while (I <= Length(T)) and (T[I] in ['0'..'9']) do
+    begin
+      { Beyond MaxExp the value is 0 or above AMax anyway. }
+      if Exp < MaxExp then Exp := Exp * 10 + Ord(T[I]) - Ord('0');
+      Inc(I);
+    end;
     if I = Start then Exit;
+    if Exp > MaxExp then Exp := MaxExp;
+    if ExpNeg then Exp := -Exp;
   end;
   if I <= Length(T) then Exit;
-  Val(T, F, Code); // locale-independent; no thousands separator
-  if (Code <> 0) or IsNan(F) or IsInfinite(F) then Exit;
-  if IsPercent then MaxValue := 100
-  else if AIsAlpha then MaxValue := 1
-  else MaxValue := 255;
-  AValue := CSSRGBToByte(F, MaxValue);
   Result := True;
+
+  { Move the decimal point by the exponent. }
+  Digits := IntPart + FracPart;
+  if StringReplace(Digits, '0', '', [rfReplaceAll]) = '' then Exit; // zero
+  if Neg then Exit;                                                 // < 0
+  PointPos := Length(IntPart) + Exp;
+  { Below 0.0001 even the largest scale (255) rounds to zero. }
+  if PointPos <= -4 then Exit;
+  if PointPos <= 0 then
+  begin
+    IntPart := '';
+    FracPart := StringOfChar('0', -PointPos) + Digits;
+  end
+  else if PointPos >= Length(Digits) then
+  begin
+    IntPart := Digits + StringOfChar('0', PointPos - Length(Digits));
+    FracPart := '';
+  end
+  else
+  begin
+    IntPart := Copy(Digits, 1, PointPos);
+    FracPart := Copy(Digits, PointPos + 1, Length(Digits));
+  end;
+
+  while (IntPart <> '') and (IntPart[1] = '0') do Delete(IntPart, 1, 1);
+  if Length(IntPart) > 4 then
+  begin
+    AValue := 255;
+    Exit;
+  end;
+  if IntPart = '' then IntValue := 0 else IntValue := StrToInt(IntPart);
+  if IntValue >= AMax then
+  begin
+    AValue := 255;
+    Exit;
+  end;
+  { Avoid floating-point underflow on tiny, but valid, decimal inputs. }
+  if (IntValue = 0) and (Copy(FracPart, 1, 4) = '0000') then Exit;
+  { Accumulate from the least significant digit. Unlike Val, this also
+    accepts very long fractions without overflowing its numeric parser.
+    Discard negligible tails before division to avoid floating underflow. }
+  Fraction := 0;
+  for I := Length(FracPart) downto 1 do
+  begin
+    if Fraction < 1e-300 then Fraction := 0;
+    Fraction := (Ord(FracPart[I]) - Ord('0') + Fraction) / 10;
+  end;
+  AValue := HalfUp((IntValue + Fraction) * 255 / AMax);
 end;
 
-{ Parse modern RGB syntax, optionally retaining missing comma channels. }
-function CSSRGBParseSyntax(const S: string; AAllowMissing: boolean;
-  out ABaseColor: string; var AColor: TBGRAPixel;
-  out AOverrideAlpha, AMissing: boolean): boolean;
+{ CSS number/percentage, clamped and quantized to a byte. }
+function CSSRGBNumber(const S: string; AIsAlpha: boolean; out AValue: byte): boolean;
+var
+  MaxValue: integer;
+begin
+  AValue := 0;
+  Result := False;
+  if S = '' then Exit;
+  if S[Length(S)] = '%' then
+    Exit(CSSNumberToByte(Copy(S, 1, Length(S) - 1), 100, AValue));
+  if AIsAlpha then MaxValue := 1 else MaxValue := 255;
+  Result := CSSNumberToByte(S, MaxValue, AValue);
+end;
+
+function TryParseCSSPercentage(const S: string; out AValue: byte): boolean;
+var
+  T: string;
+begin
+  AValue := 0;
+  T := Trim(S);
+  Result := (T <> '') and (T[Length(T)] = '%') and
+    CSSNumberToByte(Copy(T, 1, Length(T) - 1), 100, AValue);
+end;
+
+{ Parse CSS RGB syntax: rgb()/rgba() with comma or space separators, and
+  relative rgb(from <origin> r g b [/ <alpha>]). The origin is not validated. }
+function CSSRGBParse(const S: string; out ABaseColor: string;
+  var AColor: TBGRAPixel; out AOverrideAlpha: boolean): boolean;
 var
   T, Inner, Name: string;
   Args: TCSSRGBStringArray;
@@ -397,9 +481,7 @@ var
   function Arg(AIndex: integer; AIsAlpha: boolean; var AValue: byte): boolean;
   begin
     Result := True;
-    if Comma and AAllowMissing and ((Args[AIndex] = '') or (Args[AIndex] = '?')) then
-      AMissing := True
-    else if not CSSRGBNumber(Args[AIndex], AIsAlpha, AValue) then
+    if not CSSRGBNumber(Args[AIndex], AIsAlpha, AValue) then
     begin
       if AIsAlpha then AValue := 255 else AValue := 0;
       Result := False;
@@ -410,7 +492,6 @@ begin
   Result := False;
   ABaseColor := '';
   AOverrideAlpha := True;
-  AMissing := False;
   T := Trim(S);
   P := Pos('(', T);
   if (P = 0) or (T[Length(T)] <> ')') then Exit;
@@ -432,6 +513,11 @@ begin
         Start := I + 1;
       end;
     if not (Length(Args) in [3, 4]) then Exit;
+    { Comma syntax: the RGB channels are all numbers or all percentages. }
+    for I := 1 to 2 do
+      if (Args[I] <> '') and (Args[0] <> '') and
+        ((Args[I][Length(Args[I])] = '%') <> (Args[0][Length(Args[0])] = '%')) then
+        Exit;
     Result := True;
     if Length(Args) = 4 then
       Result := Arg(3, True, AColor.alpha)
@@ -469,135 +555,40 @@ begin
   if not Arg(2, False, AColor.blue) then Result := False;
 end;
 
-{ Historical comma syntax, including optional parentheses and Val forms. }
-function CSSRGBLegacyParse(const S: string; var AColor: TBGRAPixel;
-  out AMissing: boolean): boolean;
-var
-  Args: TCSSRGBStringArray;
-  P, Start, I: integer;
-
-  function ReadValue(const Text: string; IsAlpha: boolean; var Value: byte): boolean;
-  var
-    Number: string;
-    Percent: boolean;
-    Code, IntValue: integer;
-    F, MaxValue: double;
-  begin
-    Result := True;
-    if (Text = '') or (Text = '?') then
-    begin
-      AMissing := True;
-      Exit;
-    end;
-    if CSSRGBNumber(Text, IsAlpha, Value) then Exit;
-    Number := Text;
-    Percent := Number[Length(Number)] = '%';
-    if Percent then Delete(Number, Length(Number), 1);
-    if Percent or IsAlpha then
-      Val(Number, F, Code)
-    else
-    begin
-      Val(Number, IntValue, Code);
-      if Code = 0 then F := IntValue;
-    end;
-    Result := Code = 0;
-    if Result then Result := not (IsNan(F) or IsInfinite(F));
-    if not Result then
-    begin
-      if IsAlpha then Value := 255 else Value := 0;
-      Exit;
-    end;
-    if Percent then MaxValue := 100
-    else if IsAlpha then MaxValue := 1
-    else MaxValue := 255;
-    Value := CSSRGBToByte(F, MaxValue);
-  end;
-
-begin
-  Result := False;
-  AMissing := False;
-  if not ((Copy(S, 1, 4) = 'rgb(') or (Copy(S, 1, 5) = 'rgba(') or
-    (Copy(S, 1, 4) = 'rgb ') or (Copy(S, 1, 5) = 'rgba ')) then Exit;
-  Args := nil;
-  P := Pos('(', S);
-  if P = 0 then Start := Pos(' ', S) + 1 else Start := P + 1;
-  I := Start;
-  while I <= Length(S) do
-  begin
-    if S[I] in [',', ')'] then
-    begin
-      SetLength(Args, Length(Args) + 1);
-      Args[High(Args)] := Trim(Copy(S, Start, I - Start));
-      Start := I + 1;
-      if S[I] = ')' then Break;
-    end;
-    Inc(I);
-  end;
-  Result := (P = 0) or (I <= Length(S));
-  if (I > Length(S)) and (Start <= Length(S)) then
-  begin
-    SetLength(Args, Length(Args) + 1);
-    Args[High(Args)] := Copy(S, Start, Length(S) - Start + 1);
-  end;
-  if not (Length(Args) in [3, 4]) then Exit(False);
-  if not ReadValue(Args[0], False, AColor.red) then Result := False;
-  if not ReadValue(Args[1], False, AColor.green) then Result := False;
-  if not ReadValue(Args[2], False, AColor.blue) then Result := False;
-  if Length(Args) = 4 then
-  begin
-    if not ReadValue(Args[3], True, AColor.alpha) then Result := False;
-  end
-  else AColor.alpha := 255;
-end;
-
-{ Modern syntax with historical comma-syntax fallback. }
-function CSSRGBParse(const S: string; AAllowMissing: boolean;
-  out ABaseColor: string; var AColor: TBGRAPixel;
-  out AOverrideAlpha, AMissing: boolean): boolean;
-var
-  InitialColor: TBGRAPixel;
-begin
-  InitialColor := AColor;
-  Result := CSSRGBParseSyntax(S, AAllowMissing, ABaseColor, AColor,
-    AOverrideAlpha, AMissing);
-  if Result then Exit;
-  AColor := InitialColor;
-  ABaseColor := '';
-  AOverrideAlpha := True;
-  Result := CSSRGBLegacyParse(LowerCase(Trim(S)), AColor, AMissing);
-  if AMissing and not AAllowMissing then Result := False;
-end;
-
-{ Validate nested origins with the private syntax parser, then let TryStrToBC
-  recognize the leaf (CSS/LCL names, default, transparent or hex). Do not call
-  TryStrToBC on a function here: it calls the public parser again. No ToBGRA
+{ Validate nested origins with the private syntax parser. Leaves must be CSS
+  names or strict hex, never LCL identifiers or CSS-wide keywords. No ToBGRA
   conversion is needed, so supported system names keep their identity. }
 function CSSRGBOriginValid(const S: string): boolean;
 var
   Origin, Base: string;
   P: TBGRAPixel;
-  V: TBCColorValue;
-  OverrideAlpha, Missing: boolean;
+  Kind: TBCSymbolicColor;
+  I: integer;
+  OverrideAlpha: boolean;
 begin
   Origin := S;
   while Pos('(', Origin) > 0 do
   begin
     P := BGRABlack;
-    if not CSSRGBParse(Origin, False, Base, P, OverrideAlpha, Missing) then
+    if not CSSRGBParse(Origin, Base, P, OverrideAlpha) then
       Exit(False);
     if Base = '' then Exit(True);
     Origin := Base;
   end;
-  Result := TryStrToBC(Origin, V);
+  if TryCSSNameToSymbolic(Origin, Kind) or
+    (CSSColors.IndexOf(StringReplace(Origin, 'grey', 'gray', [rfIgnoreCase])) >= 0) then Exit(True);
+  Result := False;
+  if not (Length(Origin) in [4, 5, 7, 9]) or (Origin[1] <> '#') then Exit;
+  for I := 2 to Length(Origin) do
+    if not (Origin[I] in ['0'..'9', 'a'..'f', 'A'..'F']) then Exit;
+  Result := True;
 end;
 
 function TryParseCSSRGB(const S: string; out ABaseColor: string;
   out AColor: TBGRAPixel; out AOverrideAlpha: boolean): boolean;
-var
-  Missing: boolean;
 begin
   AColor := BGRABlack;
-  Result := CSSRGBParse(S, False, ABaseColor, AColor, AOverrideAlpha, Missing);
+  Result := CSSRGBParse(S, ABaseColor, AColor, AOverrideAlpha);
   if Result and (ABaseColor <> '') then
     Result := CSSRGBOriginValid(ABaseColor);
 end;

@@ -256,7 +256,8 @@ begin
 
   if (FMode = pmColorValue) then
     ColorText.Hint :=
-      'Examples: #FF000080, red, ThreeDFace, rgb(from ThreeDFace r g b / 50%)'
+      'Examples: #FF000080, clRed, clBtnFace 50%, ThreeDFace, ' +
+      'rgb(from ThreeDFace r g b / 50%)'
   else
     ColorText.Hint := 'Examples: #FF000080, #FF0000';
   Status.Caption := '';
@@ -344,7 +345,7 @@ end;
   LCL equivalent are not listed.
   Fixed colors: CSS names grouped by pixel value, with transparent (clNone)
   inserted alphabetically, then the remaining LCL identifiers in the order
-  returned by GetColorValues (including clDefault). }
+  returned by GetColorValues (clDefault is shown as revert). }
 procedure TBCColorPickerForm.BuildColorList;
 begin
   AddSystemColors;
@@ -396,7 +397,8 @@ begin
     if J <> -1 then
       FFixedNames.Delete(J);
 
-    CSSTransparentName := BCToStr(TBCColorValue.New(scNone));
+    { the CSS name: BCToStr writes clNone, listed with the LCL name }
+    CSSTransparentName := 'transparent';
     CSSTransparentDone := False;
 
     { CSSColors has only the opaque colors, transparent
@@ -436,8 +438,15 @@ begin
         TBCColorValue.New(scNone), ColorToString(clNone));
 
     for I := 0 to FFixedNames.Count - 1 do
-      AddEntry(FFixedNames[I], pekColor,
-        TBCColorValue.New(StringToColor(FFixedNames[I])));
+    begin
+      C := StringToColor(FFixedNames[I]);
+      { revert is a CSS-wide keyword, not a CSS system color. Keep its
+        association with clDefault in the picker, not the system-name table. }
+      if C = clDefault then
+        AddEntry('revert', pekColor, TBCColorValue.New(scDefault), FFixedNames[I])
+      else
+        AddEntry(FFixedNames[I], pekColor, TBCColorValue.New(C));
+    end;
   finally
     FreeAndNil(FFixedNames);
   end;
@@ -706,8 +715,7 @@ begin
     if FValue.Alpha = 0 then
       Status.Caption := 'Transparent'
     else
-      Status.Caption := Format('Opacity: %d%%',
-        [Round(FValue.Alpha * 100 / 255)]);
+      Status.Caption := 'Opacity: ' + BCAlphaToStr(FValue.Alpha);
     if SystemColor <> nil then
     begin
       SystemColor.ItemIndex := Sel;
@@ -785,7 +793,8 @@ begin
       Status.Caption := 'Enter #RRGGBBAA, rgba(r,g,b,a) or a color name'
     else if (FMode = pmColorValue) then
       Status.Caption :=
-        'Enter #RRGGBBAA, a color name or rgb(from <name> r g b / <alpha>)'
+        'Enter #RRGGBBAA, a color name, <name> <opacity>% or ' +
+        'rgb(from <name> r g b / <alpha>)'
     else
       Status.Caption := 'Enter #RRGGBB or #RRGGBBAA';
     Status.Font.Color := clRed;

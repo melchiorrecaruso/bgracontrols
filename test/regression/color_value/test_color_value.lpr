@@ -188,6 +188,7 @@ var
   AllOK: boolean;
   Seen: TStringList;
   K: TBCColor;
+  T: string;
 
 begin
   TestBCParserContract;
@@ -210,7 +211,6 @@ begin
   Show('transparent');
   Show('clNone');
   Show('#00000000');
-  Show('default');
   Show('clDefault');
   Show('clBtnFace');
   Show('ThreeDFace');
@@ -218,9 +218,9 @@ begin
   Show('clForm');
   Show('clMenuHighlight');
   Show('rgb(from ThreeDFace r g b / 50%)');
-  Show('rgb(from clForm r g b / 0.3)');
+  Show('clForm 30%');
   Show('rgb(from #FF0000 r g b / 25%)');
-  Show('rgb(from default r g b / 50%)');
+  Show('clDefault 50%');
   Show('rgb(from transparent r g b / 50%)');
   Show('AccentColor');
   Show('Face');
@@ -265,7 +265,7 @@ begin
     'transparent = clNone = scNone');
   Check((Parse('#00000000').Kind = scCustomRGB) and not BCSameValue(Parse('#00000000'), BCNone) and
     BCSameColor(Parse('#00000000'), BCNone), '#00000000 is a custom value, the same pixel as transparent');
-  Check(BCToStr(Parse('#00000000')) = 'rgb(from black r g b / 0%)', '#00000000 is black with alpha 0');
+  Check(BCToStr(Parse('#00000000')) = 'clBlack 0%', '#00000000 is black with alpha 0');
   Check(SameBytes(BCNone.WithAlpha(128).ToBGRA, BGRA(0, 0, 0, 128)) and
     (BCNone.WithAlpha(128).Kind = scCustomRGB), 'scNone with an opacity is black, as in CSS');
   Check(BCSameValue(BCNone.WithAlpha(0), BCNone), 'scNone with opacity 0 stays scNone');
@@ -318,8 +318,8 @@ begin
       if not (TryCSSNameToSymbolic(LowerCase(S.CSSName), S2) and (S2 = S)) then
         AllOK := False;
     end;
-    Check(AllOK and (Seen.Count = 26),
-      Format('%d unique CSS names (25 LCL, transparent)', [Seen.Count]));
+    Check(AllOK and (Seen.Count = 27),
+      Format('%d unique CSS names (26 LCL, transparent)', [Seen.Count]));
   finally
     Seen.Free;
   end;
@@ -339,15 +339,16 @@ begin
 
   Check(Parse('ThreeDFace').Kind = scBtnFace, 'ThreeDFace is a system color');
   Check(BCSameValue(Parse('ThreeDFace'), Parse('clBtnFace')), 'ThreeDFace = clBtnFace as value');
-  Check(TryStrToBC('ButtonFace', V) and (V.Kind = scBtnFace) and (BCToStr(V) = 'ThreeDFace'),
-    'ButtonFace is read as clBtnFace and written as ThreeDFace');
-  Check(BCToStr(Parse('threedface')) = 'ThreeDFace', 'names are case-insensitive, written as in the table');
-  Check(BCToStr(Parse('clBtnFace')) = 'ThreeDFace', 'clBtnFace is written as ThreeDFace');
-  Check(BCToStr(Parse('clHotLight')) = 'clHotLight', 'clHotLight (no exact CSS name) is written clHotLight');
-  Check(BCToStr(Parse('clMenuHighlight')) = 'clMenuHighlight', 'clMenuHighlight (no exact CSS name) is written clMenuHighlight');
-  Check(not TryStrToBC('LinkText', V), 'LinkText not mapped (no exact LCL equivalent)');
+  Check(TryStrToBC('ButtonFace', V) and (V.Kind = scBtnFace) and (BCToStr(V) = 'clBtnFace') and
+    (BCToCSS(V) = 'ThreeDFace'), 'ButtonFace is read as clBtnFace, CSS ThreeDFace');
+  Check(BCToCSS(Parse('threedface')) = 'ThreeDFace', 'names are case-insensitive, CSS as in the table');
+  Check(BCToStr(Parse('ThreeDFace')) = 'clBtnFace', 'ThreeDFace is written as clBtnFace');
+  Check(BCToStr(Parse('clHotLight')) = 'clHotLight', 'clHotLight is written clHotLight');
+  Check(BCToCSS(Parse('clHotLight')) = 'LinkText', 'CSS: clHotLight -> LinkText');
+  Check(TryStrToBC('LinkText', V) and (V.Kind = scHotLight), 'LinkText is read as clHotLight');
+  Check(BCToStr(Parse('clMenuHighlight')) = 'clMenuHighlight', 'clMenuHighlight (no CSS name) is written clMenuHighlight');
   Check(BCToStr(Parse('clForm')) = 'clForm', 'clForm (no CSS name) is written clForm');
-  Check(BCToStr(ColorToBC(clForm, 128)) = 'rgb(from clForm r g b / 50%)', 'clForm with alpha');
+  Check(BCToStr(ColorToBC(clForm, 128)) = 'clForm 50%', 'clForm with alpha');
   Check(BCToBGRA(Parse('ThreeDFace')) = ColorToBGRA(ColorToRGB(clBtnFace)), 'ThreeDFace resolves to ColorToRGB(clBtnFace)');
   Check(BCToColor(Parse('ThreeDFace')) = clBtnFace, 'ThreeDFace -> TColor clBtnFace (still symbolic)');
   Check(not TryStrToBC('AccentColor', V), 'AccentColor is not mapped to an LCL color');
@@ -360,10 +361,13 @@ begin
   Check(BCSameValue(Parse('DarkSlateGrey'), Parse('darkslategray')), 'DarkSlateGrey = darkslategray');
   Check((Parse('clRed').Kind = scCustomRGB) and
     (BCToColor(Parse('clRed')) = clRed), 'clRed is RGB');
-  Check(BCToStr(Parse('#FF0000')) = 'red', 'opaque RGB with a CSS name is written with it');
-  Check(BCToStr(Parse('CornflowerBlue')) = 'cornflowerblue', 'named colors are written lowercase, as in CSS');
-  Check(BCToStr(Parse('clSkyBlue')) = '#A6CAF0', 'clSkyBlue (no CSS name) -> #A6CAF0');
-  Check(BCToStr(Parse('rgb(from red r g b / 50%)')) = 'rgb(from red r g b / 50%)', 'named RGB with alpha keeps the CSS name');
+  Check(BCToStr(Parse('#FF0000')) = 'clRed', 'RGB with an LCL name is written with it');
+  Check(BCToCSS(Parse('#FF0000')) = 'red', 'CSS: RGB with a CSS name is written with it');
+  Check(BCToStr(Parse('CornflowerBlue')) = '#6495ED', 'RGB without an LCL name -> #hex');
+  Check(BCToCSS(Parse('CornflowerBlue')) = 'cornflowerblue', 'CSS: named colors are written lowercase');
+  Check(BCToStr(Parse('clSkyBlue')) = 'clSkyBlue', 'clSkyBlue is written clSkyBlue');
+  Check(BCToStr(Parse('rgb(from red r g b / 50%)')) = 'clRed 50%', 'LCL named RGB with alpha');
+  Check(BCToCSS(Parse('clRed 50%')) = 'rgb(from red r g b / 50%)', 'CSS: named RGB with alpha keeps the CSS name');
   Check(BCToStr(Parse('#123456')) = '#123456', 'RGB without a name -> #hex');
   Check(BCToStr(Parse('#12345680')) = '#12345680', 'RGB without a name, with alpha -> #RRGGBBAA');
   Check(not BCSameValue(Parse('#FF000000'), Parse('#00000000')), '#FF000000 keeps its RGB (<> #00000000)');
@@ -379,15 +383,18 @@ begin
 
   // LCL identifiers
   Check(Parse('clDefault').Kind = scDefault, 'clDefault is scDefault');
-  Check(BCToStr(Parse('clNone')) = 'transparent', 'clNone is written transparent');
-  Check(BCToStr(Parse('clDefault')) = 'default', 'clDefault is written default');
+  Check(BCToStr(Parse('clNone')) = 'clNone', 'clNone is written clNone');
+  Check(BCToStr(Parse('transparent')) = 'clNone', 'transparent is written clNone');
+  Check(BCToStr(Parse('clDefault')) = 'clDefault', 'clDefault is written clDefault');
+  Check(not TryStrToBC('default', V) and not TryStrToBC('rgb(from default r g b / 50%)', V) and
+    not TryStrToBC('default 50%', V), 'default is no longer read (clDefault only)');
 
   // Convert TColor + opacity pairs to values and back to text.
   Check(BCSameValue(ColorToBC(clBtnFace, 128), Parse('rgb(from ThreeDFace r g b / 50%)')), 'old pair clBtnFace + 128 -> system');
-  Check(BCToStr(ColorToBC(clBtnFace, 128)) = 'rgb(from ThreeDFace r g b / 50%)', 'old pair -> text');
-  Check(BCToStr(ColorToBC(clRed)) = 'red', 'old pair clRed -> red');
+  Check(BCToStr(ColorToBC(clBtnFace, 128)) = 'clBtnFace 50%', 'old pair -> text');
+  Check(BCToStr(ColorToBC(clRed)) = 'clRed', 'old pair clRed -> clRed');
   Check(BCToStr(ColorToBC($123456)) = '#563412', 'old pair without a name -> #hex');
-  Check(BCToStr(ColorToBC(clDefault, 128)) = 'rgb(from default r g b / 50%)', 'old pair clDefault + 128');
+  Check(BCToStr(ColorToBC(clDefault, 128)) = 'clDefault 50%', 'old pair clDefault + 128');
   Check(BCToColor(ColorToBC(clDefault)) = clDefault, 'clDefault -> TColor clDefault');
 
   // opacity
@@ -418,11 +425,11 @@ begin
     'default can resolve to clNone');
   Check(SameBytes(BCToBGRA(BCDefault(128), clDefault), BGRA(0, 0, 0, 128)),
     'unresolved default falls back to black');
-  Check(BCToBGRA(Parse('rgb(from default r g b / 50%)'), clWindow) = ColorToBGRA(ColorToRGB(clWindow), 128), 'default resolves to the control default');
-  Check(BCSameColor(Parse('rgb(from default r g b / 0%)'), Parse('transparent')), 'default with alpha 0 = transparent');
-  Check(not BCSameColor(Parse('default'), Parse('transparent')), 'visible default <> transparent');
-  Check(not BCSameColor(Parse('default'), Parse('#000000')), 'visible default <> black');
-  Check(BCSameColor(Parse('default'), BCDefault) and not BCSameColor(Parse('default'), BCDefault(128)),
+  Check(BCToBGRA(Parse('clDefault 50%'), clWindow) = ColorToBGRA(ColorToRGB(clWindow), 128), 'default resolves to the control default');
+  Check(BCSameColor(Parse('clDefault 0%'), Parse('transparent')), 'default with alpha 0 = transparent');
+  Check(not BCSameColor(Parse('clDefault'), Parse('transparent')), 'visible default <> transparent');
+  Check(not BCSameColor(Parse('clDefault'), Parse('#000000')), 'visible default <> black');
+  Check(BCSameColor(Parse('clDefault'), BCDefault) and not BCSameColor(Parse('clDefault'), BCDefault(128)),
     'two defaults match only with the same opacity');
 
   // reading channels: the color of now, the value is not changed
@@ -482,16 +489,69 @@ begin
   Nature('clForm', clForm);
   Nature('rgb(from InfoBackground r g b / 50%)', clInfoBk);
   RoundTrip('transparent');
-  Check(BCToStr(BCNone) = 'transparent', 'transparent is written transparent');
-  Nature('default', clDefault);
+  Check(BCToStr(BCNone) = 'clNone', 'transparent is written clNone');
+  Nature('clDefault', clDefault);
   RoundTrip('#12345678');
   RoundTrip('#00000000');
-  RoundTrip('rgb(from clInfoBk r g b / 20%)');
-  RoundTrip('rgb(from default r g b / 50%)');
+  RoundTrip('rgb(from InfoBackground r g b / 20%)');
+  Check(not TryStrToBC('rgb(from clRed r g b / 50%)', V),
+    'CSS functions reject LCL origins');
+  Check(not TryStrToBC('rgb(from rgb(from clDefault r g b) r g b)', V),
+    'nested CSS functions reject LCL origins');
+  RoundTrip('clDefault 50%');
 
   // relative syntax over a function
-  Check(BCToStr(Parse('rgb(from rgb(255 0 0) r g b / 50%)')) = 'rgb(from red r g b / 50%)', 'relative syntax over rgb() as base');
-  Check(BCToStr(Parse('rgb(from rgb(from ThreeDFace r g b / 10%) r g b / 50%)')) = 'rgb(from ThreeDFace r g b / 50%)', 'relative syntax over a relative base');
+  Check(BCToStr(Parse('rgb(from rgb(255 0 0) r g b / 50%)')) = 'clRed 50%', 'relative syntax over rgb() as base');
+  Check(BCToStr(Parse('rgb(from rgb(from ThreeDFace r g b / 10%) r g b / 50%)')) = 'clBtnFace 50%', 'relative syntax over a relative base');
+
+  // short form: <name> <percentage>
+  Check(BCSameValue(Parse('clBtnFace 50%'), TBCColorValue.New(scBtnFace, 128)), 'short form clBtnFace 50%');
+  Check(BCSameValue(Parse('ThreeDFace 50%'), TBCColorValue.New(scBtnFace, 128)), 'short form after a CSS system name');
+  Check(BCSameValue(Parse('red 20%'), Parse('clRed 20%')), 'short form after a CSS name');
+  Check(BCSameValue(Parse('clForm 49.8%'), ColorToBC(clForm, 127)), 'short form with one decimal');
+  Check(BCSameValue(Parse('clForm 49.804%'), ColorToBC(clForm, 127)), 'short form with more decimals');
+  Check(BCSameValue(Parse('clDefault 80%'), BCDefault(204)), 'short form clDefault 80%');
+  Check(BCSameValue(Parse('  clBtnFace '#9' 50%  '), TBCColorValue.New(scBtnFace, 128)), 'short form blanks');
+  Check(BCSameValue(Parse('clRed 150%'), Parse('clRed')) and
+    BCSameValue(Parse('clRed -5%'), Parse('clRed 0%')), 'short form percentage clamped');
+  Check(BCToStr(Parse('coral 50%')) = '#FF7F5080', 'coral 50% -> #hex with alpha');
+  Check(not TryStrToBC('clBlue 50', V), 'short form: % required');
+  Check(not TryStrToBC('clBlue 0.5', V), 'short form: no number without %');
+  Check(not TryStrToBC('clBlue50%', V), 'short form: blank required');
+  Check(not TryStrToBC('clBlue 50 %', V), 'short form: no blank before %');
+  Check(not TryStrToBC('#FF0000 50%', V), 'short form: not after #hex');
+  Check(not TryStrToBC('clNone 50%', V), 'short form: not after clNone');
+  Check(not TryStrToBC('transparent 50%', V), 'short form: not after transparent');
+  Check(not TryStrToBC('50%', V), 'short form: name required');
+  Check(not TryStrToBC('NotAColor 50%', V), 'short form: unknown name rejected');
+  Check(not TryStrToBC('rgb(255 0 0) 50%', V), 'short form: not after a function');
+
+  // opacity text: whole percentage when exact, otherwise one decimal
+  Check(BCToStr(ColorToBC(clForm, 127)) = 'clForm 49.8%', 'alpha 127 -> 49.8%');
+  Check(BCToStr(ColorToBC(clForm, 128)) = 'clForm 50%', 'alpha 128 -> 50%');
+  Check(BCToStr(ColorToBC(clForm, 129)) = 'clForm 50.6%', 'alpha 129 -> 50.6%');
+  Check(BCToStr(ColorToBC(clForm, 130)) = 'clForm 51%', 'alpha 130 -> 51%');
+  Check(BCToStr(ColorToBC(clForm, 0)) = 'clForm 0%', 'alpha 0 -> 0%');
+  Check(BCToCSS(ColorToBC(clBtnFace, 127)) = 'rgb(from ThreeDFace r g b / 49.8%)', 'CSS alpha 127 -> 49.8%');
+  AllOK := True;
+  for A := 0 to 254 do
+  begin
+    V := ColorToBC(clForm, A);
+    T := BCToStr(V);
+    if not (TryStrToBC(T, W) and BCSameValue(V, W)) then AllOK := False;
+    T := Copy(T, Length('clForm ') + 1, Length(T));
+    { 'N%' or 'N.D%', N without leading zeros }
+    if (Length(T) < 2) or (T[Length(T)] <> '%') or
+      ((Pos('.', T) > 0) and (Pos('.', T) <> Length(T) - 2)) or
+      ((Length(T) > 2) and (T[1] = '0') and (T[2] <> '.')) then
+      AllOK := False;
+    if not AllOK then
+    begin
+      WriteLn('  alpha ', A, ' -> ', BCToStr(V));
+      Break;
+    end;
+  end;
+  Check(AllOK, 'alpha 0..254: whole or one-decimal percentage, round trip');
 
   // CSS only
   Check(BCToCSS(Parse('clBtnFace')) = 'ThreeDFace', 'CSS: clBtnFace -> ThreeDFace');
@@ -502,10 +562,14 @@ begin
     'CSS: clForm (no CSS name) -> its RGB: ' + BCToCSS(Parse('clForm')));
   Check(BCToCSS(Parse('clSkyBlue')) = '#A6CAF0', 'CSS: clSkyBlue -> #A6CAF0');
   Check(BCToCSS(Parse('clNone')) = 'transparent', 'CSS: clNone -> transparent');
-  Check(BCToCSS(Parse('default'), clWindow) = 'Window', 'CSS: default with clWindow default -> Window');
-  Check(BCToCSS(Parse('rgb(from default r g b / 50%)'), clBtnFace) = 'rgb(from ThreeDFace r g b / 50%)', 'CSS: default + alpha -> its default');
-  Check(BCToCSS(Parse('default'), clDefault) = 'black', 'CSS: default without a known default -> black');
-  Check(BCToCSS(Parse('default'), clNone) = 'transparent', 'CSS: default with clNone default -> transparent');
+  Check(BCToCSS(Parse('clDefault'), clWindow) = 'revert', 'CSS: opaque default -> revert');
+  Check(BCToCSS(Parse('clDefault'), clDefault) = 'revert', 'CSS: opaque default without a known default -> revert');
+  Check(BCToCSS(Parse('clDefault 50%'), clBtnFace) = 'rgb(from ThreeDFace r g b / 50%)', 'CSS: default + alpha -> its default');
+  Check(BCToCSS(Parse('clDefault 50%'), clDefault) = 'rgb(from black r g b / 50%)', 'CSS: default + alpha without a known default -> black');
+  Check(BCToCSS(Parse('clDefault 50%'), clNone) = 'transparent', 'CSS: default + alpha with clNone default -> transparent');
+  Check(BCToCSS(Parse('clDefault'), clWindow, True) = BGRAToStr(ColorToBGRA(ColorToRGB(clWindow)), nil, 0, True, True),
+    'CSS resolved: default -> its default RGB');
+  Check(BCToCSS(Parse('#12345680')) = '#12345680', 'CSS: RGB without a name -> #hex');
   AllOK := True;
   for I := 0 to COLOR_FORM do
   begin

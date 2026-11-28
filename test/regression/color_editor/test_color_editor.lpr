@@ -1007,15 +1007,16 @@ begin
     First := Low(BCSymbolicCSSNames);
     while BCSymbolicCSSNames[First].Kind <> K do Inc(First);
     Canonical := BCSymbolicCSSNames[First].Name;
-    Check(BCToStr(TBCColorValue.New(K)) = Canonical,
-      'first CSS name is canonical output');
+    Check(BCToCSS(TBCColorValue.New(K)) = Canonical,
+      'first CSS name is canonical CSS output');
     Check(TryStrToBC(Canonical, V) and (V.Kind = K), 'canonical CSS roundtrip');
   end;
   Check(not TryCSSNameToSymbolic('', K), 'empty CSS name rejected');
   Check(not TryCSSNameToSymbolic('NotAColor', K), 'unknown CSS name rejected');
   Check(BCToStr(TBCColorValue.New(scForm)) = 'clForm', 'unnamed kind keeps LCL name');
-  Check(BCToStr(TBCColorValue.New(scDefault)) = 'default', 'default stays special');
-  Check(BCToStr(TBCColorValue.New(scCustomRGB)) = 'black', 'custom RGB stays RGB');
+  Check(BCToStr(TBCColorValue.New(scBtnFace)) = 'clBtnFace', 'named kind written with its LCL name');
+  Check(BCToStr(TBCColorValue.New(scDefault)) = 'clDefault', 'default is clDefault');
+  Check(BCToStr(TBCColorValue.New(scCustomRGB)) = 'clBlack', 'custom RGB stays RGB');
 end;
 
 procedure TestColorTextReuse;
@@ -1048,14 +1049,16 @@ begin
   begin
     P := CSSColors[I];
     Expected := LowerCase(CSSColors.Name[CSSColors.IndexOfColor(P)]);
-    S := BCToStr(TBCColorValue.New(P));
-    Check(S = Expected, 'RGB output keeps first dictionary name lowercase');
+    S := BCToCSS(TBCColorValue.New(P));
+    Check(S = Expected, 'RGB CSS output keeps first dictionary name lowercase');
     Check(TryStrToBC(S, V) and V.ToBGRA.EqualsExactly(P), 'named RGB roundtrip');
   end;
   Check(BCToStr(TBCColorValue.New(BGRA($AB, $CD, $EF))) = '#ABCDEF',
     'unnamed opaque RGB keeps uppercase hex');
-  Check(BCToStr(TBCColorValue.New(BGRA(255, 0, 0, 0))) = 'rgb(from red r g b / 0%)',
-    'transparent named RGB keeps its CSS name and RGB');
+  Check(BCToStr(TBCColorValue.New(BGRA(255, 0, 0, 0))) = 'clRed 0%',
+    'transparent named RGB keeps its LCL name and RGB');
+  Check(BCToCSS(TBCColorValue.New(BGRA(255, 0, 0, 0))) = 'rgb(from red r g b / 0%)',
+    'transparent named RGB keeps its CSS name and RGB in CSS');
 end;
 
 procedure TestColorConversions;
@@ -1121,24 +1124,27 @@ var A: TBCColor;
 begin
   RoundTrip('#11223344', '#11223344', TBCColorValue.New(BGRA($11, $22, $33, $44)));
   RoundTrip(' #abcdef ', '#ABCDEF', TBCColorValue.New(BGRA($AB, $CD, $EF)));
-  RoundTrip('#FF000000', 'rgb(from red r g b / 0%)', TBCColorValue.New(BGRA(255, 0, 0, 0)));
-  RoundTrip('red', 'red', FC(clRed, 255));
-  RoundTrip('clRed', 'red', FC(clRed, 255));
+  RoundTrip('#FF000000', 'clRed 0%', TBCColorValue.New(BGRA(255, 0, 0, 0)));
+  RoundTrip('red', 'clRed', FC(clRed, 255));
+  RoundTrip('clRed', 'clRed', FC(clRed, 255));
   RoundTrip('rgb(from ThreeDFace r g b / 50%)',
-    'rgb(from ThreeDFace r g b / 50%)', TBCColorValue.New(scBtnFace, 128));
-  RoundTrip('clBtnFace', 'ThreeDFace', TBCColorValue.New(scBtnFace));
-  RoundTrip('ThreeDShadow', 'ButtonShadow', TBCColorValue.New(scBtnShadow));
-  RoundTrip('threedhighlight', 'ButtonHighlight', TBCColorValue.New(scBtnHighlight));
-  RoundTrip('ButtonFace', 'ThreeDFace', TBCColorValue.New(scBtnFace));
+    'clBtnFace 50%', TBCColorValue.New(scBtnFace, 128));
+  RoundTrip('clBtnFace 50%', 'clBtnFace 50%', TBCColorValue.New(scBtnFace, 128));
+  RoundTrip('clBtnFace', 'clBtnFace', TBCColorValue.New(scBtnFace));
+  RoundTrip('ThreeDShadow', 'clBtnShadow', TBCColorValue.New(scBtnShadow));
+  RoundTrip('threedhighlight', 'clBtnHighlight', TBCColorValue.New(scBtnHighlight));
+  RoundTrip('ButtonFace', 'clBtnFace', TBCColorValue.New(scBtnFace));
   RoundTrip('rgb(from ThreeDShadow r g b / 50%)',
-    'rgb(from ButtonShadow r g b / 50%)', TBCColorValue.New(scBtnShadow, 128));
+    'clBtnShadow 50%', TBCColorValue.New(scBtnShadow, 128));
+  RoundTrip('LinkText', 'clHotLight', TBCColorValue.New(scHotLight));
+  RoundTrip('rgb(from LinkText r g b / 50%)', 'clHotLight 50%',
+    TBCColorValue.New(scHotLight, 128));
   { Check rejection of unsupported modern CSS system names. }
   Invalid('Canvas');
   Invalid('CanvasText');
   Invalid('Field');
   Invalid('FieldText');
   Invalid('ButtonBorder');
-  Invalid('LinkText');
   Invalid('SelectedItem');
   Invalid('SelectedItemText');
   Invalid('AccentColor');
@@ -1148,12 +1154,14 @@ begin
   Invalid('ActiveText');
   Invalid('VisitedText');
   Invalid('rgb(from SelectedItem r g b / 50%)');
-  Invalid('rgb(from LinkText r g b / 50%)');
-  RoundTrip('clNone', 'transparent', TBCColorValue.New(scNone));
-  RoundTrip('rgb(from default r g b / 25%)', 'rgb(from default r g b / 25%)',
+  RoundTrip('clNone', 'clNone', TBCColorValue.New(scNone));
+  RoundTrip('transparent', 'clNone', TBCColorValue.New(scNone));
+  RoundTrip('clDefault 25%', 'clDefault 25%',
     TBCColorValue.New(scDefault, 64));
-  RoundTrip('rgb(from ThreeDFace r g b / 0%)', 'rgb(from ThreeDFace r g b / 0%)',
+  RoundTrip('rgb(from ThreeDFace r g b / 0%)', 'clBtnFace 0%',
     TBCColorValue.New(scBtnFace, 0));
+  Invalid('clBtnFace 50');  { '%' required }
+  Invalid('#FF0000 50%');   { no percentage after #hex }
   Invalid('');
   Invalid('#12345');
   Invalid('clNotAColor');
@@ -1202,7 +1210,7 @@ begin
   A := TBCColor.Create(clBtnFace, 128);
   try
     Check(A.ToBGRA = ColorToBGRA(ColorToRGB(clBtnFace), 128), 'ToBGRA');
-    Check(A.ToString = 'rgb(from ThreeDFace r g b / 50%)', 'ToString: ' + A.ToString);
+    Check(A.ToString = 'clBtnFace 50%', 'ToString: ' + A.ToString);
     Check(A.SameValueAs(clBtnFace, 128) and not A.SameValueAs(clBtnFace, 127),
       'SameValueAs');
     Check(A.SameColorAs(FC(ColorToRGB(clBtnFace), 128)) and
@@ -1447,7 +1455,7 @@ begin
     Check([paDialog, paCustomDrawn, paMultiSelect, paReadOnly] <= E.GetAttributes,
       'TBCColor editor attributes');
     Check(not (paSubProperties in E.GetAttributes), 'Color/Alpha not listed');
-    Check(E.AllEqual and (E.GetValue = 'rgb(from red r g b / 50%)'), 'editor value: ' + E.GetValue);
+    Check(E.AllEqual and (E.GetValue = 'clRed 50%'), 'editor value: ' + E.GetValue);
     B.Fill.Alpha := 1;
     Check(not E.AllEqual, 'TBCColor mixed selection');
 
@@ -1461,7 +1469,7 @@ begin
     Check(D.Error = '', 'picker from editor: ' + D.Error);
     Check((A.Fill.SameValueAs(clBtnFace, $40)) and
       (B.Fill.SameValueAs(A.Fill)), 'TBCColor multi-edit through the picker');
-    Check(E.GetValue = 'rgb(from ThreeDFace r g b / 25%)', 'editor shows color name');
+    Check(E.GetValue = 'clBtnFace 25%', 'editor shows color name');
   finally
     D.Timer.Free; D.Free;
     E.Free; B.Free; A.Free;
@@ -1709,20 +1717,34 @@ end;
 { Moves the list to AIndex as the user does; checks the item shown and that
   the value text agrees with it. }
 procedure ListKey(F: TCustomForm; L: TComboBox; AIndex, AExpected: integer);
-var T: string;
+var T, Item: string; VT, VItem: TBCColorValue;
 begin
   UserSelect(L, AIndex);
   T := TEdit(F.FindComponent('ColorText')).Text;
   Check(L.ItemIndex = AExpected, Format('list key to %d shows %d, expected %d (%s)',
     [AIndex, L.ItemIndex, AExpected, L.Items[AExpected]]));
+  { the text is BCToStr (LCL name), the item its CSS name: same value }
   if AExpected > 0 then
-    Check(T = L.Items[AExpected], Format('list key to %d: value %s, item %s',
-      [AIndex, T, L.Items[AExpected]]));
+  begin
+    Item := L.Items[AExpected];
+    if Pos(' / ', Item) > 0 then
+      Item := Copy(Item, 1, Pos(' / ', Item) - 1);
+    Check(TryStrToBC(T, VT) and TryStrToBC(Item, VItem) and BCSameValue(VT, VItem),
+      Format('list key to %d: value %s, item %s', [AIndex, T, L.Items[AExpected]]));
+  end;
 end;
 
 procedure TAlphaDriver.Tick(Sender: TObject);
 var F: TCustomForm; L: TComboBox; W: TPaintBox; I: integer; P: TBGRAPixel;
   N: string;
+
+  procedure CheckOpacity(A: byte; const Expected: string);
+  begin
+    SetSpin(F, 'AlphaValue', A);
+    Check(TLabel(F.FindComponent('Status')).Caption = Expected,
+      'opacity label for alpha ' + IntToStr(A));
+  end;
+
 begin
   F := Screen.ActiveCustomForm;
   if (F = nil) or (F.Caption <> 'RGBA color') then Exit;
@@ -1731,19 +1753,19 @@ begin
     L := TComboBox(F.FindComponent('SystemColor'));
     { two groups, by CSS name (aliases in one item), LCL name without one:
       system colors; fixed colors (CSS named colors, the other LCL
-      identifiers, transparent for clNone, clDefault) }
+      identifiers, transparent for clNone, revert for clDefault) }
     Check((L <> nil) and (L.Items[0] = 'Custom color') and
       (L.Items.IndexOf('System colors') = 1) and
       (L.Items.IndexOf('Fixed colors') > 1) and
       (L.Items.IndexOf('CSS colors') < 0) and (L.Items.IndexOf('LCL colors') < 0) and
       (L.Items.IndexOf('ThreeDFace / ButtonFace') >= 0) and
       (L.Items.IndexOf('ThreeDFace') < 0) and (L.Items.IndexOf('ButtonFace') < 0) and
-      (L.Items.IndexOf('clBtnFace') < 0) and (L.Items.IndexOf('clHotLight') >= 0) and
+      (L.Items.IndexOf('clBtnFace') < 0) and (L.Items.IndexOf('LinkText') >= 0) and
       (L.Items.IndexOf('orange') >= 0) and (L.Items.IndexOf('aqua / cyan') >= 0) and
       (L.Items.IndexOf('aqua') < 0) and (L.Items.IndexOf('cyan') < 0) and
       (L.Items.IndexOf('lime') >= 0) and
       (L.Items.IndexOf('transparent') >= 0) and (L.Items.IndexOf('clNone') < 0) and
-      (L.Items.IndexOf('clDefault') >= 0) and
+      (L.Items.IndexOf('revert') >= 0) and (L.Items.IndexOf('clDefault') < 0) and
       (L.Items.IndexOf('clRed') < 0) and (L.Items.IndexOf('clLime') < 0) and
       (L.Items.IndexOf('clMoneyGreen') >= 0), 'color combo contents');
     case Action of
@@ -1794,7 +1816,13 @@ begin
             Check(L.ItemIndex = I, 'combo keeps the chosen item ' + Text);
           if Action = aaListAlpha then
           begin
-            SetSpin(F, 'AlphaValue', 128);
+            CheckOpacity(127, 'Opacity: 49.8%');
+            CheckOpacity(128, 'Opacity: 50%');
+            CheckOpacity(129, 'Opacity: 50.6%');
+            CheckOpacity(130, 'Opacity: 51%');
+            CheckOpacity(255, 'Opacity: 100%');
+            CheckOpacity(0, 'Transparent');
+            CheckOpacity(128, 'Opacity: 50%');
             Check(L.ItemIndex = I, 'alpha keeps the chosen item ' + Text);
           end;
         end;
@@ -1927,8 +1955,8 @@ var D: TAlphaDriver; V: TBCColor; K: TBCLinkedHolder; P: TBGRAPixel; M: byte;
     D.Timer.Enabled := True;
     Accepted := ExecuteBCColorPicker(V);
     Check(Accepted and (D.Error = ''), 'relative alias ' + S + ': ' + D.Error);
-    Check(D.Text = 'rgb(from ButtonHighlight r g b / 50%)',
-      'alpha gives the canonical name: ' + D.Text);
+    Check(D.Text = 'clBtnHighlight 50%',
+      'alpha gives the LCL name: ' + D.Text);
     Check(V.SameValueAs(clBtnHighlight, 128), 'relative alias preserves identity');
     D.ExpectedEntry := '';
   end;
@@ -1941,15 +1969,15 @@ begin
     D.Timer.Interval := 100;
     D.Timer.OnTimer := @D.Tick;
 
-    LFMPickerCase('#FF0000FF', 'scCustomRGB', 'red');
-    LFMPickerCase('#FF000080', 'scCustomRGB', 'rgb(from red r g b / 50%)');
-    LFMPickerCase('#FF000000', 'scCustomRGB', 'rgb(from red r g b / 0%)');
+    LFMPickerCase('#FF0000FF', 'scCustomRGB', 'clRed');
+    LFMPickerCase('#FF000080', 'scCustomRGB', 'clRed 50%');
+    LFMPickerCase('#FF000000', 'scCustomRGB', 'clRed 0%');
     LFMPickerCase('#0708094C', 'scCustomRGB', '#0708094C');
-    LFMPickerCase('#00000080', 'scBtnFace', 'rgb(from ThreeDFace r g b / 50%)');
-    LFMPickerCase('#0000004C', 'scBtnFace', 'rgb(from ThreeDFace r g b / 0.298)');
+    LFMPickerCase('#00000080', 'scBtnFace', 'clBtnFace 50%');
+    LFMPickerCase('#0000004C', 'scBtnFace', 'clBtnFace 29.8%');
     LFMPickerCase('#000000FF', 'scHotLight', 'clHotLight');
-    LFMPickerCase('#00000080', 'scDefault', 'rgb(from default r g b / 50%)');
-    LFMPickerCase('#00000000', 'scNone', 'transparent');
+    LFMPickerCase('#00000080', 'scDefault', 'clDefault 50%');
+    LFMPickerCase('#00000000', 'scNone', 'clNone');
 
     { Check unchanged OK preserves symbolic identity and alpha, including
       bytes that cannot round-trip through a whole percentage. }
@@ -1977,7 +2005,7 @@ begin
     D.Action := aaAlphaBottom;
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'opacity-only pick', @D.Error);
-    Check(D.Text = 'rgb(from ThreeDFace r g b / 0%)', 'text shows system color: ' + D.Text);
+    Check(D.Text = 'clBtnFace 0%', 'text shows system color: ' + D.Text);
     Check(V.SameValueAs(clBtnFace, 0), 'system color kept: ' + V.ToString);
 
     V.Assign(clDefault, 255);
@@ -1994,7 +2022,7 @@ begin
       'new RGB replaces system color: ' + V.ToString);
 
     V.Assign(clRed, 200);
-    D.Text := 'rgb(from clBtnShadow r g b / 25%)';
+    D.Text := 'rgb(from ThreeDShadow r g b / 25%)';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'typed system color', @D.Error);
     Check(V.SameValueAs(clBtnShadow, $40), 'typed system color: ' + V.ToString);
@@ -2010,7 +2038,7 @@ begin
     D.Text := 'Window';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'combo pick', @D.Error);
-    Check(D.Text = 'Window', 'combo resets opacity: ' + D.Text);
+    Check(D.Text = 'clWindow', 'combo resets opacity: ' + D.Text);
     Check(V.SameValueAs(clWindow, 255), 'combo selects opaque system color');
 
     V.Assign(RGBToColor(255, 0, 0), $80);
@@ -2018,7 +2046,7 @@ begin
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'named RGB combo pick', @D.Error);
     Check(V.SameValueAs(clLime, 255), 'combo selects a named RGB color: ' + V.ToString);
-    Check(D.Text = 'lime', 'combo shows the CSS name: ' + D.Text);
+    Check(D.Text = 'clLime', 'text shows the LCL name: ' + D.Text);
 
     V.Assign(RGBToColor(255, 0, 0), $80);
     D.Text := 'clMoneyGreen';
@@ -2037,16 +2065,16 @@ begin
     D.Text := 'ThreeDFace / ButtonFace';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'alias combo pick', @D.Error);
-    Check(D.Text = 'ThreeDFace', 'combo shows the canonical name: ' + D.Text);
+    Check(D.Text = 'clBtnFace', 'text shows the LCL name: ' + D.Text);
     Check(V.SameValueAs(clBtnFace, 255), 'alias is the same system color: ' + V.ToString);
-    Check(V.ToString = 'ThreeDFace', 'the value keeps no alias: ' + V.ToString);
+    Check(V.ToString = 'clBtnFace', 'the value keeps no alias: ' + V.ToString);
 
     V.Assign(clRed, $80);
     D.Action := aaListAlpha;
     D.Text := 'ThreeDFace / ButtonFace';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'alias with alpha', @D.Error);
-    Check(D.Text = 'rgb(from ThreeDFace r g b / 50%)', 'alpha keeps the name: ' + D.Text);
+    Check(D.Text = 'clBtnFace 50%', 'alpha keeps the name: ' + D.Text);
     Check(V.SameValueAs(clBtnFace, 128), 'alias with alpha value: ' + V.ToString);
 
     V.Assign(clRed, 255);
@@ -2054,7 +2082,7 @@ begin
     D.Text := 'aqua / cyan';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'CSS combo pick', @D.Error);
-    Check(D.Text = 'rgb(from aqua r g b / 50%)', 'CSS name with alpha keeps the name: ' + D.Text);
+    Check(D.Text = 'clAqua 50%', 'named RGB with alpha keeps the LCL name: ' + D.Text);
     Check(V.SameValueAs(TBCColorValue.New(BGRA(0, 255, 255, 128))),
       'CSS named color is RGB: ' + V.ToString);
 
@@ -2063,7 +2091,7 @@ begin
     D.Text := 'aqua / cyan';
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'CSS alias pick', @D.Error);
-    Check(D.Text = 'aqua', 'combo shows the first CSS name: ' + D.Text);
+    Check(D.Text = 'clAqua', 'text shows the LCL name: ' + D.Text);
 
     { a typed alias selects the shared item; alpha gives the canonical name }
     V.Assign(clRed, 255);
@@ -2073,7 +2101,7 @@ begin
     D.Timer.Enabled := True;
     CheckPick(ExecuteBCColorPicker(V), 'typed alias', @D.Error);
     D.ExpectedEntry := '';
-    Check(D.Text = 'rgb(from ButtonHighlight r g b / 50%)', 'typed alias: ' + D.Text);
+    Check(D.Text = 'clBtnHighlight 50%', 'typed alias: ' + D.Text);
     Check(V.SameValueAs(clBtnHighlight, 128), 'typed alias value: ' + V.ToString);
     RelativeAliasCase('rgba(from ThreeDHighlight r g b / 25%)');
     RelativeAliasCase('RGB(FROM ThreeDHighlight R G B / 25%)');
@@ -2088,10 +2116,10 @@ begin
 
     V.Assign(clBtnFace, $80);
     D.Action := aaList;
-    D.Text := 'clDefault';
+    D.Text := 'revert';
     D.Timer.Enabled := True;
-    CheckPick(ExecuteBCColorPicker(V), 'clDefault combo pick', @D.Error);
-    Check(D.Text = 'default', 'clDefault is opaque: ' + D.Text);
+    CheckPick(ExecuteBCColorPicker(V), 'revert / clDefault combo pick', @D.Error);
+    Check(D.Text = 'clDefault', 'clDefault is opaque: ' + D.Text);
     Check(V.SameValueAs(clDefault, 255), 'clDefault resets alpha: ' + V.ToString);
 
     V.Assign(clBtnFace, $C8);
@@ -2130,7 +2158,7 @@ begin
     D.Timer.Enabled := True;
     B := ExecuteBCColorPicker(V);
     Check(B and (D.Error = ''), 'list keys: ' + D.Error);
-    Check(V.ToString = 'aliceblue', 'list keys end on the first fixed color: ' +
+    Check(V.ToString = '#F0F8FF', 'list keys end on the first fixed color (aliceblue, no LCL name): ' +
       V.ToString);
 
     V.Assign(clBtnFace, 200);

@@ -16,21 +16,32 @@ type
   TBCColorString = type string;      // '#RRGGBBAA'
   TBCCSSColorString = type string;   // see TryCSSColor
 
-{ 'transparent', 'default', 'red', '#RRGGBB[AA]' (RGB without a CSS name),
-  'ThreeDFace', 'clForm' (no CSS name), or 'rgb(from <name> r g b / <alpha>)'
-  for any of these names with an alpha below 255. }
+{ BGRAControls text, not CSS: an LCL identifier ('clBtnFace', 'clRed',
+  'clDefault', 'clNone'), or '#RRGGBB[AA]' for an RGB without one.
+  An alpha below 255 follows a name as a percentage: 'clBtnFace 50%',
+  'clRed 49.8%' (whole when exact, otherwise one decimal). }
 function BCToStr(const V: TBCColorValue): string;
-{ Valid CSS: LCL names become their RGB now, scDefault becomes ADefault.
+{ Alpha as an opacity percentage: whole when it round-trips, otherwise one
+  decimal digit. Shared by color serialization and picker display. }
+function BCAlphaToStr(A: byte): string;
+{ Valid CSS, preferring names: 'ThreeDFace', 'LinkText', 'red',
+  'rgb(from ThreeDFace r g b / 50%)', '#RRGGBB[AA]', 'transparent'.
+  System colors without a CSS name become their RGB now. scDefault is
+  'revert' when opaque (a CSS-wide keyword: valid only as a whole property
+  value), otherwise ADefault with its alpha.
   AResolved: always '#hex' or 'transparent'. }
 function BCToCSS(const V: TBCColorValue; ADefault: TColor = clBlack;
   AResolved: boolean = False): string;
-{ Reads BCToStr, clXxx identifiers, CSS named RGB colors, supported
-  historical CSS system names/synonyms and rgb()/rgba(). Additional modern
-  CSS roles (Canvas, Field, SelectedItem...) are not mapped to LCL fallbacks.
-  RGB functions use BCColors.TryParseCSSRGB, which validates relative origins.
-  They are converted recursively here into values, keeping symbolic identity.
-  Parenthesis-free historical RGB text is not dispatched
-  to that parser. Outputs must not be used on failure. }
+{ Reads BCToStr and CSS: clXxx identifiers, CSS named RGB colors, supported
+  CSS system names/synonyms, '#hex', strict rgb()/rgba() and a name followed
+  by a percentage ('clBtnFace 50%', 'red 20%'; '%' required, not after
+  '#hex' or transparent), and 'revert' as clDefault (alone, as in CSS).
+  Additional modern CSS roles (Canvas, Field...)
+  are not mapped to LCL fallbacks. RGB functions use
+  BCColors.TryParseCSSRGB, which accepts only CSS origins (not clXxx
+  identifiers); they are converted recursively here into values, keeping
+  symbolic identity.
+  Outputs must not be used on failure. }
 function TryStrToBC(const S: string; out V: TBCColorValue): boolean;
 
 { '#RRGGBB' or '#RRGGBBAA', '#' optional. }
@@ -50,9 +61,6 @@ implementation
 
 uses
   LCLType;
-
-const
-  KindDefaultName = 'default';
 
 { Strict hex syntax for symbolic color text: '#' is required and partial
   channels ('?'), accepted by TryStrToBGRA, are not allowed. Like BGRABitmap,
@@ -83,26 +91,18 @@ begin
     P := CSSColors[I];
 end;
 
-{ Prefer a whole percentage when it reads back to the same alpha byte;
-  otherwise use up to three decimal places. }
-function AlphaToStr(A: byte): string;
+{ Opacity as a percentage: whole when it reads back to the same alpha byte,
+  otherwise with one decimal, which is always enough (0.1% is 0.255 of a
+  byte). Uses HalfUp, checked with the same parser as TryStrToBC. }
+function BCAlphaToStr(A: byte): string;
 var
-  P: integer;
-  Parsed: TBGRAPixel;
-  Base, Candidate: string;
-  OverrideAlpha: boolean;
-  FS: TFormatSettings;
+  Tenths: integer;
+  Parsed: byte;
 begin
-  P := Round(A * 100 / 255);
-  Candidate := IntToStr(P) + '%';
-  { Use the same BCColors parser as TryRGBFunction to check round-trip accuracy.
-    In particular 30% and 70% decode to 77 and 179, not 76 and 178. }
-  if TryParseCSSRGB('rgb(0 0 0 / ' + Candidate + ')', Base, Parsed,
-    OverrideAlpha) and (Parsed.alpha = A) then
-    Exit(Candidate);
-  FS := DefaultFormatSettings;
-  FS.DecimalSeparator := '.';
-  Result := FormatFloat('0.###', A / 255, FS);
+  Result := IntToStr(HalfUp(A * 100 / 255)) + '%';
+  if TryParseCSSPercentage(Result, Parsed) and (Parsed = A) then Exit;
+  Tenths := HalfUp(A * 1000 / 255);
+  Result := IntToStr(Tenths div 10) + '.' + IntToStr(Tenths mod 10) + '%';
 end;
 
 { BCColors parses RGB syntax and validates the origin. Interpret that origin
@@ -125,17 +125,27 @@ begin
     V := V.WithAlpha(P.alpha);
 end;
 
-function NameWithAlpha(const AName: string; AAlpha: byte): string;
+{ 'clBtnFace' or 'clBtnFace 50%' }
+function ShortNameWithAlpha(const AName: string; AAlpha: byte): string;
 begin
   if AAlpha = 255 then
     Result := AName
   else
-    Result := 'rgb(from ' + AName + ' r g b / ' + AlphaToStr(AAlpha) + ')';
+    Result := AName + ' ' + BCAlphaToStr(AAlpha);
+end;
+
+{ 'ThreeDFace' or 'rgb(from ThreeDFace r g b / 50%)' }
+function CSSNameWithAlpha(const AName: string; AAlpha: byte): string;
+begin
+  if AAlpha = 255 then
+    Result := AName
+  else
+    Result := 'rgb(from ' + AName + ' r g b / ' + BCAlphaToStr(AAlpha) + ')';
 end;
 
 { The CSS name of the RGB, whatever the alpha: 'red' or
   'rgb(from red r g b / 50%)'. '#RRGGBB[AA]' when the RGB has no name. }
-function RGBToStr(const P: TBGRAPixel): string;
+function RGBToCSS(const P: TBGRAPixel): string;
 var
   Opaque: TBGRAPixel;
 begin
@@ -145,26 +155,28 @@ begin
   if (Result = '') or (Result[1] = '#') then
     Exit(BGRAToStr(P, nil, 0, True, True));
   { Keep canonical names lowercase, but preserve uppercase hex digits. }
-  Result := NameWithAlpha(LowerCase(Result), P.alpha);
+  Result := CSSNameWithAlpha(LowerCase(Result), P.alpha);
 end;
 
 function BCToStr(const V: TBCColorValue): string;
 var
   Name: string;
   C: TColor;
+  P: TBGRAPixel;
 begin
-  case V.Kind of
-    scCustomRGB:
-      Exit(RGBToStr(V.ToBGRA));
-    scNone:
-      Exit('transparent');
-    scDefault:
-      Exit(NameWithAlpha(KindDefaultName, V.Alpha));
+  if V.Kind = scCustomRGB then
+  begin
+    P := V.ToBGRA;
+    { 'clRed', 'clMoneyGreen'... the RGB of a fixed LCL color }
+    if ColorToIdent(RGBToColor(P.red, P.green, P.blue), Name) then
+      Exit(ShortNameWithAlpha(Name, P.alpha));
+    Exit(BGRAToStr(P, nil, 0, True, True));
   end;
-  Name := V.Kind.CSSName;
-  if (Name = '') and V.Kind.TryToColor(C) then
-    Name := ColorToString(C);
-  Result := NameWithAlpha(Name, V.Alpha);
+  if not V.Kind.TryToColor(C) then
+    C := clDefault; // not reached: every named kind is an LCL color
+  if V.Kind = scNone then
+    Exit(ColorToString(C));
+  Result := ShortNameWithAlpha(ColorToString(C), V.Alpha);
 end;
 
 function BCToCSS(const V: TBCColorValue; ADefault: TColor;
@@ -174,53 +186,87 @@ var
 begin
   if ADefault = clDefault then
     ADefault := clBlack;
-  if AResolved or (V.Kind.IsLCL and (V.Kind.CSSName = '') and
-    (V.Kind <> scDefault)) then
+  if AResolved then
   begin
     P := V.ToBGRA(ADefault);
     if P.alpha = 0 then
       Exit('transparent');
-    if AResolved then
-      Exit(BGRAToStr(P, nil, 0, True, True));
-    Exit(RGBToStr(P));
+    Exit(BGRAToStr(P, nil, 0, True, True));
   end;
-  if V.Kind = scDefault then
-    Exit(BCToCSS(TBCColorValue.New(ADefault, V.Alpha), clBlack));
-  Result := BCToStr(V);
+  case V.Kind of
+    scNone:
+      Exit('transparent');
+    scDefault:
+      { 'revert' takes no alpha: use the default color instead. }
+      if V.Alpha = 255 then
+        Exit('revert')
+      else
+        Exit(BCToCSS(TBCColorValue.New(ADefault, V.Alpha), clBlack));
+    scCustomRGB:
+      Exit(RGBToCSS(V.ToBGRA));
+  end;
+  if V.Kind.CSSName <> '' then
+    Exit(CSSNameWithAlpha(V.Kind.CSSName, V.Alpha));
+  { system color without a CSS name: its RGB now }
+  P := V.ToBGRA(ADefault);
+  if P.alpha = 0 then
+    Exit('transparent');
+  Result := RGBToCSS(P);
+end;
+
+{ A single name: CSS system names, clXxx identifiers and CSS named colors. }
+function TryNameToBC(const T: string; out V: TBCColorValue): boolean;
+var
+  P: TBGRAPixel;
+  C: longint;
+  K: TBCSymbolicColor;
+begin
+  Result := True;
+  if TryCSSNameToSymbolic(T, K) then
+    V := TBCColorValue.New(K)
+  else if IdentToColor(T, C) then
+    V := TBCColorValue.New(TColor(C))
+  else if TryCSSNamedColor(T, P) then
+    V := TBCColorValue.New(P)
+  else
+    Result := False;
+end;
+
+{ '<name> <percentage>': 'clBtnFace 50%', 'red 20%'. }
+function TryShortForm(const T: string; out V: TBCColorValue): boolean;
+var
+  I: integer;
+  A: byte;
+begin
+  Result := False;
+  I := LastDelimiter(' '#9#10#12#13, T);
+  if I <= 1 then Exit;
+  if not TryParseCSSPercentage(Copy(T, I + 1, Length(T)), A) then Exit;
+  if not TryNameToBC(TrimRight(Copy(T, 1, I - 1)), V) then Exit;
+  { transparent has no opacity to set }
+  if V.Kind = scNone then Exit;
+  V := V.WithAlpha(A);
+  Result := True;
 end;
 
 function TryStrToBC(const S: string; out V: TBCColorValue): boolean;
 var
   T: string;
   P: TBGRAPixel;
-  C: longint;
-  K: TBCSymbolicColor;
 begin
   T := Trim(S);
   Result := T <> '';
   if not Result then Exit;
 
-  if SameText(T, KindDefaultName) then
+  if TryNameToBC(T, V) then Exit;
+  { BCToCSS output for clDefault: a whole value only, as in CSS }
+  if SameText(T, 'revert') then
   begin
     V := TBCColorValue.New(scDefault);
     Exit;
   end;
-  if TryCSSNameToSymbolic(T, K) then
-  begin
-    V := TBCColorValue.New(K);
-    Exit;
-  end;
-  if IdentToColor(T, C) then
-  begin
-    V := TBCColorValue.New(TColor(C));
-    Exit;
-  end;
-  if TryCSSNamedColor(T, P) then
-  begin
-    V := TBCColorValue.New(P);
-    Exit;
-  end;
   if Pos('(', T) > 0 then Exit(TryRGBFunction(T, V));
+  if T[Length(T)] = '%' then Exit(TryShortForm(T, V));
 
   { '#' required: 'Face' is not #FFAACCEE }
   Result := TryHexColor(T, P);

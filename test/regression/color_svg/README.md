@@ -11,13 +11,16 @@ Expected differences, checked explicitly:
 
 - space-separated, relative and decimal RGB, and percentage alpha: accepted by
   BC only;
-- `rgb(50%,0,0)`: red 128 in BC, 127 in BGRABitmap/SVG;
-- `rgb 1,2,3` (no parentheses): accepted by BGRABitmap only;
+- `rgb(50%,0%,0%)`: red 128 in BC, 127 in BGRABitmap/SVG;
+- historical forms, accepted by BGRABitmap only: `rgb 1,2,3` (no
+  parentheses), `rgb(1,2,3)xyz` (trailing text), `rgb(50%,0,0)` (mixed
+  percentages and numbers in the comma syntax);
+- `BCToStr` short form (`clBtnFace 50%`): BC only;
 - partial channels (`?`, empty): BGRABitmap only, checked separately;
 - system names (`ThreeDFace`, `clBtnFace`): BC only; SVG uses its black
   fallback, also with a separate `fill-opacity`;
 - `BCToCSS`: symbolic output keeps the system name; resolved hex output renders
-  in SVG.
+  in SVG; `clDefault` is exported as `revert`, read back by BC only.
 
 FPCUnit program built with the `nogui` widgetset; `.github/workflows/make.pas`
 builds and runs it. With `nogui` system colors resolve to black; build with

@@ -170,6 +170,11 @@ begin
   WriteLn('EXPORT symbolic=', Symbolic, ' resolved=', Resolved);
   ColorCase(Symbolic, Expected, True, False);
   ColorCase(Resolved, Expected, True, True);
+  { clDefault: 'revert' is a CSS-wide keyword, not a color for BGRABitmap }
+  Check(BCToCSS(TBCColorValue.New(scDefault)) = 'revert', 'export: clDefault -> revert');
+  Check(TryStrToBC('revert', V) and (V.Kind = scDefault), 'revert is read back as clDefault');
+  Check(not TryStrToBC('revert 50%', V) and not TryStrToBC('rgb(from revert r g b)', V),
+    'revert takes no alpha and is no origin');
   for Mode := 0 to 1 do
     Check(SameRendered(Render(Resolved, '0.5', Mode = 1),
       ColorToBGRA(clBtnFace, 64)), 'embedded alpha multiplied by fill-opacity');
@@ -193,16 +198,20 @@ begin
   ColorCase('rgb(from red r g b / alpha)', BGRA(255, 0, 0), True, False);
   ColorCase('rgb(255 0 0 / )', BGRAPixelTransparent, False, False);
   { Comma syntax: explicitly check differences in rounding and acceptance. }
-  ColorCase('rgb(50%,0,0)', BGRA(128, 0, 0), True, True, '#7F0000');
+  ColorCase('rgb(50%,0,0)', BGRA(127, 0, 0), False, True);  // mixed: BC rejects
+  ColorCase('rgb(50%,0%,0%)', BGRA(128, 0, 0), True, True, '#7F0000');
   ColorCase('rgba(255,0,0,50%)', BGRA(255, 0, 0, 128), True, False);
   ColorCase('rgb(127.5,0,0)', BGRA(128, 0, 0), True, False);
   ColorCase('rgb(255,0,0,0.502)', BGRA(255, 0, 0, 128), True, True);
-  ColorCase('rgb(1,2,3)xyz', BGRA(1, 2, 3), True, True);
+  ColorCase('rgb(1,2,3)xyz', BGRA(1, 2, 3), False, True);
   ColorCase('rgb 1,2,3', BGRA(1, 2, 3), False, True);
   ColorCase('rgb(255,0,?)', BGRAPixelTransparent, False, False);
   PartialCases;
   ColorCase('ThreeDFace', ColorToBGRA(clBtnFace), True, False);
   ColorCase('clBtnFace', ColorToBGRA(clBtnFace), True, False);
+  { BCToStr short form: BC only }
+  ColorCase('clBtnFace 50%', ColorToBGRA(clBtnFace, 128), True, False);
+  ColorCase('clRed 50%', BGRA(255, 0, 0, 128), True, False);
   ColorCase('Canvas', BGRAPixelTransparent, False, False);
   ColorCase('transparent', BGRAPixelTransparent, True, True);
   ColorCase('#FF000000', BGRA(255, 0, 0, 0), True, True);

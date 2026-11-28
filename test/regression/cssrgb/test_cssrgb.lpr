@@ -99,6 +99,26 @@ begin
 
 end;
 
+procedure PercentCase(const S: string; Expected: byte);
+var
+  A: byte;
+begin
+  if not TryParseCSSPercentage(S, A) then
+  begin
+    Check(False, S + ' TryParseCSSPercentage accepts');
+    Exit;
+  end;
+  Check(A = Expected, S + ' TryParseCSSPercentage gives ' + IntToStr(Expected) +
+    ', not ' + IntToStr(A));
+end;
+
+procedure PercentRejectCase(const S: string);
+var
+  A: byte;
+begin
+  Check(not TryParseCSSPercentage(S, A), S + ' TryParseCSSPercentage rejects');
+end;
+
 function Nested(ALevels: integer): string;
 var
   i: integer;
@@ -116,7 +136,9 @@ begin
   AbsoluteCase('rgb(255,0,0,0.502)', BGRA(255, 0, 0, 128));
   AbsoluteCase('rgb( 1 , 2 , 3 )', BGRA(1, 2, 3));
   AbsoluteCase('rgba(255,0,0,50%)', BGRA(255, 0, 0, 128));
-  AbsoluteCase('rgb(50%,0,0)', BGRA(128, 0, 0));  // mixed percentages and numbers
+  RejectCase('rgb(50%,0,0)');  // comma syntax: no mixed percentages and numbers
+  RejectCase('rgb(0,50%,0)');
+  AbsoluteCase('rgba(0,0,0,50%)', BGRA(0, 0, 0, 128));  // alpha may differ
   AbsoluteCase('rgb(100%,50%,0%)', BGRA(255, 128, 0));
   AbsoluteCase('rgb(127.5,0,0)', BGRA(128, 0, 0));
   AbsoluteCase('rgb(1e2,0,0)', BGRA(100, 0, 0));
@@ -137,6 +159,28 @@ begin
   AbsoluteCase('  rgb(  10   20 30  )  ', BGRA(10, 20, 30));
   AbsoluteCase('rgb(10'#9'20'#10'30)', BGRA(10, 20, 30));
   AbsoluteCase('rgb(10 20 30/50%)', BGRA(10, 20, 30, 128));
+  AbsoluteCase('rgb(50% 0 0)', BGRA(128, 0, 0));  // space syntax may mix
+  AbsoluteCase('rgb(1e9999 0 0)', BGRA(255, 0, 0));  // clamped, like 1e300
+  AbsoluteCase('rgb(1e-9999 0 0)', BGRA(0, 0, 0));
+  AbsoluteCase('rgb(1.' + StringOfChar('0', 400) + '1 0 0)', BGRA(1, 0, 0));
+  AbsoluteCase('rgb(0.' + StringOfChar('0', 400) + '1 0 0)', BGRA(0, 0, 0));
+
+  // HalfUp rounding, ties toward +infinity
+  AbsoluteCase('rgb(0 0 0 / 49.8%)', BGRA(0, 0, 0, 127));
+  AbsoluteCase('rgb(0 0 0 / 50%)', BGRA(0, 0, 0, 128));
+  AbsoluteCase('rgb(0 0 0 / 50.6%)', BGRA(0, 0, 0, 129));
+  AbsoluteCase('rgb(0 0 0 / 49.804%)', BGRA(0, 0, 0, 127));
+  AbsoluteCase('rgb(0 0 0 / 0.1%)', BGRA(0, 0, 0, 0));
+  AbsoluteCase('rgb(0 0 0 / 0.2%)', BGRA(0, 0, 0, 1));
+  AbsoluteCase('rgb(0 0 0 / 99.8%)', BGRA(0, 0, 0, 254));
+  AbsoluteCase('rgb(0 0 0 / 99.9%)', BGRA(0, 0, 0, 255));
+  AbsoluteCase('rgb(0 0 0 / 0.5e2%)', BGRA(0, 0, 0, 128));
+  AbsoluteCase('rgb(0 0 0 / 5000e-2%)', BGRA(0, 0, 0, 128));
+  AbsoluteCase('rgb(0 0 0 / 0.5)', BGRA(0, 0, 0, 128));
+  AbsoluteCase('rgb(127.5 127.49 0.5)', BGRA(128, 127, 1));
+  AbsoluteCase('rgb(10% 30% 70% / 70%)', BGRA(26, 77, 179, 179));
+  AbsoluteCase('rgb(0 0 0 / 100.0000001%)', BGRA(0, 0, 0, 255));
+  AbsoluteCase('rgb(-0 -0.0 0e5)', BGRA(0, 0, 0));
 
   // Relative syntax: origin returned as text
   RelativeCase('rgb(from red r g b)', 'red', False, 0);
@@ -154,8 +198,14 @@ begin
   SymbolicCase('rgb(from ThreeDFace r g b / 50%)', 'ThreeDFace', True, 128);
   SymbolicCase('rgba(from ThreeDFace r g b)', 'ThreeDFace', False, 0);
   SymbolicCase('RGBA(FROM ThreeDFace R G B / ALPHA)', 'ThreeDFace', False, 0);
-  SymbolicCase('rgb(from clForm r g b / 50%)', 'clForm', True, 128);
-  SymbolicCase('rgb(from default r g b)', 'default', False, 0);
+  RejectCase('rgb(from clForm r g b / 50%)');
+  RejectCase('rgb(from clDefault r g b)');
+  RejectCase('rgb(from clRed r g b / 50%)');
+  RejectCase('rgb(from CLBLUE r g b)');
+  RejectCase('rgb(from clNone r g b)');
+  RejectCase('rgb(from rgb(from clRed r g b) r g b)');
+  RejectCase('rgb(from default r g b)');  // not a CSS color
+  RejectCase('rgb(from revert r g b)');   // CSS-wide keyword, not an origin
   RejectCase('rgb(from currentColor r g b / 0)');
   RejectCase('rgb(from notacolor r g b)');
   RejectCase('rgb(from ThreeDFacce r g b / 50%)');
@@ -171,26 +221,25 @@ begin
   AbsoluteCase('rgba(1 2 3)', BGRA(1, 2, 3));
   AbsoluteCase('rgb(1'#12'2'#13'3)', BGRA(1, 2, 3));
 
-  // Accepted comma forms: optional parentheses, suffixes and Pascal numbers.
-  AbsoluteCase('rgb(1,2,3)xyz', BGRA(1, 2, 3));
-  AbsoluteCase('rgb 1,2,3', BGRA(1, 2, 3));
-  AbsoluteCase('rgb (1,2,3)', BGRA(1, 2, 3));
-  AbsoluteCase('rgba   (1,2,3,.5) suffix', BGRA(1, 2, 3, 128));
-  AbsoluteCase('rgba 1,2,3,0.5', BGRA(1, 2, 3, 128));
-  AbsoluteCase('rgb 1,2,3)', BGRA(1, 2, 3));
-  AbsoluteCase('rgb($ff,$10,0)', BGRA(255, 16, 0));
-  AbsoluteCase('rgb(%11111111,&20,0)', BGRA(255, 16, 0));
-  AbsoluteCase('rgb(50.%,0,0)', BGRA(128, 0, 0));
-  AbsoluteCase('rgba(1,2,3,1.)', BGRA(1, 2, 3));
-  AbsoluteCase('rgba(1,2,3,5.e-1)', BGRA(1, 2, 3, 128));
-  AbsoluteCase('  RGB (1,2,3)ignored  ', BGRA(1, 2, 3));
-  AbsoluteCase('RGBA 1,2,3,.3', BGRA(1, 2, 3, 77));
+  // Historical forms are no longer accepted: strict CSS only.
+  RejectCase('rgb(1,2,3)xyz');
+  RejectCase('rgb 1,2,3');
+  RejectCase('rgb (1,2,3)');
+  RejectCase('rgba   (1,2,3,.5) suffix');
+  RejectCase('rgba 1,2,3,0.5');
+  RejectCase('rgb 1,2,3)');
+  RejectCase('rgb($ff,$10,0)');
+  RejectCase('rgb(%11111111,&20,0)');
+  RejectCase('rgb(50.%,0,0)');
+  RejectCase('rgba(1,2,3,1.)');
+  RejectCase('rgba(1,2,3,5.e-1)');
+  RejectCase('  RGB (1,2,3)ignored  ');
+  RejectCase('RGBA 1,2,3,.3');
 
   // Invalid
   RejectCase('rgb()');
   RejectCase('rgb(from / r g b)');
   RejectCase('rgb(from red)(blue r g b)');
-  RejectCase('rgb(1e9999 0 0)');
   RejectCase('rgb(NaN 0 0)');
   RejectCase('rgb(Inf 0 0)');
   RejectCase('rgb($ff 0 0)');
@@ -246,6 +295,31 @@ begin
   RejectCase('rgb 255,?,?');
   RejectCase('rgba (255,?,0,?) trailing');
   RejectCase('rgb(255 ? 0)');  // no partial values in the space syntax
+
+  // TryParseCSSPercentage: '%' required, same rounding as the parser
+  AbsoluteCase('rgb(0 0 0 / 0.001960784314)', BGRA(0, 0, 0, 1));
+  AbsoluteCase('rgb(0 0 0 / 0.00196)', BGRA(0, 0, 0, 0));
+  PercentCase('0.1960784314%', 1);
+  PercentCase('0.196%', 0);
+  PercentCase('50%', 128);
+  PercentCase('49.8%', 127);
+  PercentCase('50.6%', 129);
+  PercentCase(' 30% ', 77);
+  PercentCase('+50%', 128);
+  PercentCase('150%', 255);
+  PercentCase('-5%', 0);
+  PercentCase('0%', 0);
+  PercentCase('100%', 255);
+  PercentCase('5e1%', 128);
+  PercentRejectCase('50');
+  PercentRejectCase('0.5');
+  PercentRejectCase('%');
+  PercentRejectCase('');
+  PercentRejectCase('50 %');
+  PercentRejectCase('50%%');
+  PercentRejectCase('$32%');
+  PercentRejectCase('50.%');
+  PercentRejectCase('abc%');
 
 end;
 
